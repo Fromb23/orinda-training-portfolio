@@ -23,7 +23,8 @@ describe("publish and portfolio UI regressions", () => {
   it("provides ordered selection, paging, zoom, PDF fallback, and responsive review layout", async () => {
     const viewer = await read("src/components/AttachmentView.tsx");
     expect(viewer).toContain("File {activeIndex + 1} of {attachments.length}"); expect(viewer).toContain("Show previous file"); expect(viewer).toContain("Image zoom controls"); expect(viewer).toContain("Inline PDF support varies by browser"); expect(viewer).toContain("attachments.map");
-    expect(viewer).toContain("URL.createObjectURL(blob)"); expect(viewer).toContain('setState("error")');
+    expect(viewer).toContain("URL.createObjectURL(blob)"); expect(viewer).toContain('response.status === 404');
+    expect(viewer).toContain("File not found"); expect(viewer).toContain("Session expired"); expect(viewer).toContain("Preview temporarily unavailable");
     const css = await read("src/app/globals.css");
     expect(css).toContain("@media(max-width:900px)"); expect(css).toContain(".review-workspace{grid-template-columns:1fr");
   });

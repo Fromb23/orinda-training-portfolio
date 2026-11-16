@@ -31,4 +31,21 @@ describe("private file route authorization", () => {
     getSession.mockResolvedValue({ role: "MANAGEMENT" });
     expect((await GET(request(), params)).status).toBe(200);
   });
+
+  it("keeps missing storage objects as JSON 404 responses", async () => {
+    getSession.mockResolvedValue({ role: "MANAGEMENT" });
+    const { HttpError } = await import("../src/lib/http");
+    openStored.mockRejectedValue(new HttpError(404, "File not found."));
+    const response = await GET(request(), params);
+    expect(response.status).toBe(404);
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(await response.json()).toEqual({ error: "File not found." });
+  });
+
+  it("distinguishes an expired session without looking up the private file", async () => {
+    getSession.mockResolvedValue(null);
+    const response = await GET(request(), params);
+    expect(response.status).toBe(401);
+    expect(findUnique).not.toHaveBeenCalled();
+  });
 });

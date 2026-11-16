@@ -55,6 +55,12 @@ export async function removeStored(keys: Array<string | null | undefined>) {
 }
 
 export async function openStored(key: string) {
-  const filePath = storagePath(key); const info = await stat(filePath);
-  return { stream: createReadStream(filePath), size: info.size };
+  const filePath = storagePath(key);
+  try {
+    const info = await stat(filePath);
+    return { stream: createReadStream(filePath), size: info.size };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new HttpError(404, "File not found.");
+    throw error;
+  }
 }
