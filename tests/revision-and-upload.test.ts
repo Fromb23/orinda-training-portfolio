@@ -6,16 +6,18 @@ describe("immutable publication snapshots and timestamps", () => {
   it("preserves attachment order/upload time while assigning an independent publication time", () => {
     const uploadedAt = new Date("2026-01-01T10:00:00Z"); const publishedAt = new Date("2026-01-02T11:00:00Z");
     const draft = { number: 4, title: "Ordered pages", description: "Draft", attachments: [
-      { storageKey:"a.pdf",thumbnailKey:null,originalName:"page-2.pdf",mimeType:"application/pdf",sizeBytes:2n,sha256:"a".repeat(64),width:null,height:null,position:1,uploadedAt },
-      { storageKey:"b.pdf",thumbnailKey:null,originalName:"page-1.pdf",mimeType:"application/pdf",sizeBytes:2n,sha256:"b".repeat(64),width:null,height:null,position:0,uploadedAt },
+      { storageKey:"a.pdf",thumbnailKey:null,originalName:"page-2.pdf",mimeType:"application/pdf",sizeBytes:2n,sha256:"a".repeat(64),width:null,height:null,position:1,uploadId:"upload-a",uploadedAt },
+      { storageKey:"b.pdf",thumbnailKey:null,originalName:"page-1.pdf",mimeType:"application/pdf",sizeBytes:2n,sha256:"b".repeat(64),width:null,height:null,position:0,uploadId:"upload-b",uploadedAt },
     ] };
     const snapshot = buildPublication(draft, publishedAt);
     expect(snapshot.publishedAt).toBe(publishedAt); expect(snapshot.attachments.map(x=>x.position)).toEqual([1,0]); expect(snapshot.attachments[0].uploadedAt).toBe(uploadedAt); expect(snapshot.nextNumber).toBe(5);
+    expect(snapshot.attachments.map(x=>x.uploadId)).toEqual(["upload-a", "upload-b"]);
   });
   it("does not let later draft metadata changes alter the publication payload", () => {
-    const draft = { number:1,title:"Published title",description:null,attachments:[{storageKey:"a.pdf",thumbnailKey:null,originalName:"original.pdf",mimeType:"application/pdf",sizeBytes:1n,sha256:"a".repeat(64),width:null,height:null,position:0,uploadedAt:new Date()}] };
+    const draft = { number:1,title:"Published title",description:null,attachments:[{id:"existing-id",revisionId:"existing-revision",storageKey:"a.pdf",thumbnailKey:null,originalName:"original.pdf",mimeType:"application/pdf",sizeBytes:1n,sha256:"a".repeat(64),width:null,height:null,position:0,uploadId:"upload-a",uploadedAt:new Date()}] };
     const snapshot=buildPublication(draft,new Date()); draft.title="Private edit"; draft.attachments[0].originalName="private-edit.pdf";
     expect(snapshot.title).toBe("Published title"); expect(snapshot.attachments[0].originalName).toBe("original.pdf");
+    expect(snapshot.attachments[0]).not.toHaveProperty("id"); expect(snapshot.attachments[0]).not.toHaveProperty("revisionId");
   });
 });
 

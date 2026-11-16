@@ -11,6 +11,7 @@
     "postinstall": "prisma generate",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:integration": "vitest run tests/assignment-publication.mysql.test.ts",
     "test:watch": "vitest",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",

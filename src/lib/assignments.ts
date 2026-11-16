@@ -52,11 +52,12 @@ export async function publishAssignment(id: string) {
     try { assertPublishable(assignment.draftRevision.title, assignment.draftRevision.attachments.length); } catch (error) { throw new HttpError(400, (error as Error).message); }
     const now = new Date();
     const snapshot = buildPublication(assignment.draftRevision, now);
+    const attachments = snapshot.attachments satisfies Prisma.AttachmentCreateWithoutRevisionInput[];
     if (assignment.publishedRevisionId) await tx.revision.update({ where: { id: assignment.publishedRevisionId }, data: { state: RevisionState.RETIRED } });
     await tx.revision.update({ where: { id: assignment.draftRevision.id }, data: { state: RevisionState.PUBLISHED, publishedAt: now } });
     const nextDraft = await tx.revision.create({ data: {
       assignmentId: id, number: snapshot.nextNumber, title: snapshot.title, description: snapshot.description,
-      attachments: { create: snapshot.attachments },
+      attachments: { create: attachments },
     }});
     await tx.assignment.update({ where: { id }, data: { publishedRevisionId: assignment.draftRevision.id, draftRevisionId: nextDraft.id } });
     return { publishedAt: now, revision: assignment.draftRevision.number };
