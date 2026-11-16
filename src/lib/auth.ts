@@ -5,6 +5,7 @@ import { db } from "./db";
 import { config } from "./config";
 import { HttpError } from "./http";
 import { sessionIsCurrent } from "./security-core";
+import { canonicalSiteOrigin } from "./site-url";
 
 export const SESSION_COOKIE = "orinda_session";
 export const CSRF_COOKIE = "orinda_csrf";
@@ -64,7 +65,7 @@ export async function requireCsrf(request: Request, role: AccessRole = "MANAGEME
   const headerToken = request.headers.get("x-csrf-token") ?? "";
   if (!cookieToken || cookieToken !== headerToken || !safeHashEqual(session.csrfHash, secretHash(headerToken))) throw new HttpError(403, "Invalid CSRF token. Refresh the page and try again.");
   const origin = request.headers.get("origin");
-  if (origin && origin !== new URL(request.url).origin) throw new HttpError(403, "Cross-origin mutation denied.");
+  if (origin && origin !== canonicalSiteOrigin()) throw new HttpError(403, "Cross-origin mutation denied.");
   return session;
 }
 

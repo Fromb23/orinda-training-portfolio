@@ -69,6 +69,13 @@ The examples assume Ubuntu, Node.js 22+, MySQL 8+, Nginx, and systemd.
 
 1. Create a locked-down `orinda-portfolio` service account, `/opt/orinda-portfolio/releases`, `/opt/orinda-portfolio/current`, and the persistent upload directory above.
 2. Clone this repository into a timestamped release directory. Create `/etc/orinda-portfolio.env` (mode `0600`, owned by root) from `.env.example`; use real database and cryptographic secrets there. `UPLOAD_DIR` must remain `/var/lib/orinda-portfolio/uploads` across releases.
+   Set the canonical public origin exactly (with no path, query string, or fragment):
+
+   ```sh
+   NEXT_PUBLIC_SITE_URL="https://orinda-training.scholaroscope.com"
+   ```
+
+   `NEXT_PUBLIC_SITE_URL` is included in the production build. Changing it requires running `npm run build` again and restarting the service.
 3. In the release, run `npm ci`, `npm run db:migrate`, and `npm run build`. Provision initial access only once after the first migration.
 4. Atomically point `/opt/orinda-portfolio/current` at the new release. Install `deploy/orinda-portfolio.service` as `/etc/systemd/system/orinda-portfolio.service`, then run `sudo systemctl daemon-reload`, `sudo systemctl enable --now orinda-portfolio`.
 5. Adapt `deploy/nginx.conf.example`. Define the shown `combined_no_args` log format in the `http` block so query strings containing entry tokens never reach access logs. Also ensure upstream/CDN/APM tracing and error pages do not record query strings. Obtain and renew HTTPS certificates with Certbot. Cookies are `Secure` in production, so do not serve production over HTTP.
