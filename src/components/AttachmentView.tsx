@@ -1,7 +1,6 @@
-/* eslint-disable @next/next/no-img-element */
+/* eslint-disable @next/next/no-img-element, @next/next/no-html-link-for-pages */
 "use client";
 
-import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { FileThumbnail } from "@/components/FileThumbnail";
 import { nairobiTime } from "@/lib/time";
@@ -67,8 +66,8 @@ export function AttachmentView({ attachments, context = "portfolio" }: { attachm
     <div className="active-review"><header className="review-toolbar"><div><p className="review-position">File {activeIndex + 1} of {attachments.length}</p><h2 ref={viewerHeading} tabIndex={-1}>{attachment.originalName}</h2><p className="file-metadata"><span>{fileType(attachment.mimeType)}</span><span>{fileSize(attachment.sizeBytes)}</span><span>Uploaded <time dateTime={attachment.uploadedAt}>{nairobiTime(attachment.uploadedAt, true)}</time></span><span>Africa/Nairobi</span></p></div>{state === "ready" && <div className="review-actions"><a className="button secondary" href={original} target="_blank" rel="noopener noreferrer">Open original<span className="visually-hidden"> in a new tab</span></a><a className="button secondary" href={`${original}?download=1`} download>Download</a></div>}</header>
       <div className={`preview-stage ${isImage ? "image-stage" : "pdf-stage"}`} aria-busy={state === "loading"}>
         {state === "loading" && <div className="preview-state" role="status">Loading preview…</div>}
-        {state === "missing" && <div className="preview-state preview-error" role="alert"><strong>File not found</strong><span>This file has been removed or is no longer available.</span><Link className="button" href={backHref}>{backLabel}</Link></div>}
-        {state === "session" && <div className="preview-state preview-error" role="alert"><strong>Session expired</strong><span>Your access session is no longer valid. Open your current access link again.</span><Link className="button" href="/">Return to access page</Link></div>}
+        {state === "missing" && <div className="preview-state preview-error" role="alert"><strong>File not found</strong><span>This file has been removed or is no longer available.</span><a className="button" href={backHref}>{backLabel}</a></div>}
+        {state === "session" && <div className="preview-state preview-error" role="alert"><strong>Session expired</strong><span>Your access session is no longer valid. Open your current access link again.</span><a className="button" href="/">Return to access page</a></div>}
         {state === "temporary" && <div className="preview-state preview-error" role="alert"><strong>Preview temporarily unavailable</strong><span>The file could not be loaded. Check your connection and try again.</span><button className="button" type="button" onClick={() => { setState("loading"); setPreviewUrl(null); setRetry((value) => value + 1); }}>Try again</button></div>}
         {state === "ready" && previewUrl && (isImage ? <img src={previewUrl} alt={`File ${activeIndex + 1}: ${attachment.originalName}`} style={{ transform: `scale(${zoom})` }}/> : <iframe key={previewUrl} src={`${previewUrl}#toolbar=1&view=FitH`} title={`PDF preview: ${attachment.originalName}`}/>)}
       </div>

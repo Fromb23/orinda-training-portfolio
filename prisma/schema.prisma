@@ -45,6 +45,7 @@ model Session {
 
 model Assignment {
   id                  String     @id @default(cuid())
+  isTemporary         Boolean    @default(false)
   createdAt           DateTime   @default(now()) @db.DateTime(3)
   updatedAt           DateTime   @updatedAt @db.DateTime(3)
   draftRevisionId     String?    @unique
@@ -52,6 +53,8 @@ model Assignment {
   draftRevision       Revision?  @relation("DraftRevision", fields: [draftRevisionId], references: [id], onDelete: SetNull)
   publishedRevision   Revision?  @relation("PublishedRevision", fields: [publishedRevisionId], references: [id], onDelete: SetNull)
   revisions           Revision[] @relation("AssignmentRevisions")
+
+  @@index([isTemporary, updatedAt])
 }
 
 model Revision {

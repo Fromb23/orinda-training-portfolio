@@ -4,13 +4,36 @@ import { describe, expect, it } from "vitest";
 const read = (path: string) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
 describe("publish and portfolio UI regressions", () => {
-  it("returns successful publication to a refreshed dashboard and blocks pending uploads", async () => {
+  it("uses one editor, uploads automatically, and saves current fields before direct publication", async () => {
     const editor = await read("src/components/AssignmentEditor.tsx");
-    expect(editor).toContain('router.push("/manage?published=1")');
-    expect(editor).toContain("pending.length > 0");
-    expect(editor).toContain("lastServerState !== nextServerState");
-    expect(editor).toContain("if (!dirty)");
-    expect(await read("src/components/ManageDashboard.tsx")).toContain("Assignment published successfully");
+    const dashboard = await read("src/components/ManageDashboard.tsx");
+    expect(dashboard).toContain('href="/manage/assignments/new"');
+    expect(dashboard).toContain("New assignment");
+    expect(dashboard).not.toContain("Create draft");
+    expect(editor).toContain("void uploadOne(item)");
+    expect(editor).toContain("createPromise.current");
+    expect(editor).toContain("publishAttempt.current");
+    expect(editor).toContain("draftRevisionId: publishAttempt.current");
+    expect(editor).toContain("input.value = \"\"");
+    expect(editor).toContain('finish("save")');
+    expect(editor).toContain('finish("publish")');
+    expect(editor).toContain("attachmentOrder: files.map");
+    expect(editor.indexOf('"PATCH", { title, description')).toBeLessThan(editor.indexOf("/publish`"));
+    expect(editor).not.toContain("Upload selected files");
+    expect(editor).not.toContain("Save the draft before publishing");
+    expect(editor).not.toMatch(/finalBlocked\s*=.*dirty/);
+    expect(editor).toContain('"/manage?published=1" : "/manage?saved=1"');
+    expect(dashboard).toContain("Assignment published successfully");
+  });
+
+  it("keeps temporary records private and cleans only explicitly temporary work", async () => {
+    const page = await read("src/app/manage/page.tsx");
+    const assignments = await read("src/lib/assignments.ts");
+    const cleanup = await read("scripts/cleanup-storage.ts");
+    expect(page).toContain("where:{isTemporary:false}");
+    expect(assignments).toContain("deleteTemporaryAssignment");
+    expect(assignments).toContain("deleteMany({ where: { id, isTemporary: true } })");
+    expect(cleanup).toContain("isTemporary: true");
   });
 
   it("keeps only about and assignments navigation with absolute portfolio anchors", async () => {

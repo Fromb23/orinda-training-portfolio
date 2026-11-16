@@ -2,7 +2,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { nairobiTime } from "@/lib/time";
 import { managementMutation, managementUpload } from "@/lib/management-request";
@@ -10,129 +10,148 @@ import { managementMutation, managementUpload } from "@/lib/management-request";
 type Attachment = { id: string; originalName: string; mimeType: string; sizeBytes: number; position: number; uploadedAt: string };
 type Revision = { id: string; title: string; description: string | null; createdAt: string; updatedAt: string; publishedAt: string | null; attachments: Attachment[] };
 type Assignment = { id: string; createdAt: string; updatedAt: string; draft: Revision; published: Revision | null };
-type Pending = { id: string; file: File; progress: number; state: "queued" | "uploading" | "failed"; error?: string };
+type EditorFile = { localId: string; file?: File; attachment?: Attachment; progress: number; state: "queued" | "uploading" | "complete" | "failed"; error?: string };
 
-export default function AssignmentEditor({ assignment }: { assignment: Assignment }) {
+const uploadLimit = 1;
+
+export default function AssignmentEditor({ assignment }: { assignment: Assignment | null }) {
   const router = useRouter();
-  const [title, setTitle] = useState(assignment.draft.title);
-  const [description, setDescription] = useState(assignment.draft.description ?? "");
-  const [attachments, setAttachments] = useState(assignment.draft.attachments);
-  const [pending, setPending] = useState<Pending[]>([]);
+  const [title, setTitle] = useState(assignment?.draft.title ?? "");
+  const [description, setDescription] = useState(assignment?.draft.description ?? "");
+  const [files, setFiles] = useState<EditorFile[]>(() => (assignment?.draft.attachments ?? []).map((attachment) => ({ localId: attachment.id, attachment, progress: 100, state: "complete" })));
+  const [assignmentId, setAssignmentId] = useState(assignment?.id ?? "");
+  const [temporary, setTemporary] = useState(!assignment);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [lastServerState, setLastServerState] = useState(`${assignment.draft.id}:${assignment.draft.updatedAt}`);
-  const nextServerState = `${assignment.draft.id}:${assignment.draft.updatedAt}`;
-  if (lastServerState !== nextServerState) {
-    setLastServerState(nextServerState);
-    if (!dirty) {
-      setTitle(assignment.draft.title);
-      setDescription(assignment.draft.description ?? "");
+  const createPromise = useRef<Promise<string> | null>(null);
+  const publishAttempt = useRef<string | null>(null);
+  const activeUploads = useRef(new Set<string>());
+
+  const ensureAssignment = useCallback(async () => {
+    if (assignmentId) return assignmentId;
+    if (!createPromise.current) {
+      createPromise.current = managementMutation<{ id: string }>("/api/manage/assignments", "POST", { title: "", temporary: true })
+        .then((result) => { setAssignmentId(result.id); return result.id; })
+        .catch((cause) => { createPromise.current = null; throw cause; });
     }
-    if (!busy && !pending.some((item) => item.state === "uploading")) {
-      setAttachments(assignment.draft.attachments);
-    }
-  }
+    return createPromise.current;
+  }, [assignmentId]);
+
+  const uploadOne = useCallback(async (item: EditorFile) => {
+    if (!item.file || activeUploads.current.has(item.localId)) return;
+    activeUploads.current.add(item.localId);
+    setFiles((current) => current.map((value) => value.localId === item.localId ? { ...value, state: "uploading", error: undefined } : value));
+    try {
+      const id = await ensureAssignment();
+      const attachment = await managementUpload<Attachment>(`/api/manage/assignments/${id}/attachments`, item.file, item.localId,
+        (progress) => setFiles((current) => current.map((value) => value.localId === item.localId ? { ...value, progress } : value)));
+      setFiles((current) => current.map((value) => value.localId === item.localId ? { ...value, file: undefined, attachment, progress: 100, state: "complete" } : value));
+    } catch (cause) {
+      setFiles((current) => current.map((value) => value.localId === item.localId ? { ...value, state: "failed", error: (cause as Error).message } : value));
+    } finally { activeUploads.current.delete(item.localId); }
+  }, [ensureAssignment]);
 
   useEffect(() => {
-    const hasUnsaved = () => dirty || pending.length > 0;
-    const warn = (event: BeforeUnloadEvent) => { if (hasUnsaved()) { event.preventDefault(); event.returnValue = ""; } };
-    const warnLink = (event: MouseEvent) => {
-      if (hasUnsaved() && (event.target as Element).closest("a") && !confirm("Leave without saving the draft or finishing uploads?")) event.preventDefault();
-    };
-    addEventListener("beforeunload", warn);
-    document.addEventListener("click", warnLink);
-    return () => { removeEventListener("beforeunload", warn); document.removeEventListener("click", warnLink); };
-  }, [dirty, pending]);
+    const available = uploadLimit - files.filter((item) => item.state === "uploading").length;
+    files.filter((item) => item.state === "queued" && !activeUploads.current.has(item.localId)).slice(0, Math.max(0, available)).forEach((item) => { void uploadOne(item); });
+  }, [files, uploadOne]);
 
-  function startOperation() { setMessage(""); setError(""); setBusy(true); }
-  function select(files: FileList | null) {
-    if (!files || busy) return;
-    const added = Array.from(files).map((file) => ({ id: crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().slice(0, 8), file, progress: 0, state: "queued" as const }));
-    setPending((current) => [...current, ...added]);
+  const unfinished = dirty || files.some((item) => item.state !== "complete") || (temporary && Boolean(assignmentId));
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => { if (unfinished) { event.preventDefault(); event.returnValue = ""; } };
+    addEventListener("beforeunload", warn);
+    return () => removeEventListener("beforeunload", warn);
+  }, [unfinished]);
+
+  function select(input: HTMLInputElement) {
+    const selected = Array.from(input.files ?? []);
+    input.value = "";
+    if (!selected.length || busy) return;
+    publishAttempt.current = null;
+    setFiles((current) => [...current, ...selected.map((file) => ({ localId: crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "").slice(0, 8), file, progress: 0, state: "queued" as const }))]);
     setMessage(""); setError("");
   }
 
-  async function uploadOne(item: Pending) {
-    setPending((current) => current.map((value) => value.id === item.id ? { ...value, state: "uploading" } : value));
+  async function leave(event: React.MouseEvent<HTMLAnchorElement>) {
+    event.preventDefault();
+    if (unfinished && !confirm("Leave this unfinished assignment?")) return;
+    if (temporary && assignmentId) await managementMutation(`/api/manage/assignments/${assignmentId}?temporary=1`, "DELETE").catch(() => undefined);
+    router.push("/manage");
+  }
+
+  async function remove(item: EditorFile) {
+    if (busy || item.state === "uploading") return;
+    if (item.state !== "complete") { publishAttempt.current = null; setFiles((current) => current.filter((value) => value.localId !== item.localId)); return; }
+    if (!item.attachment || !confirm("Remove this attachment?")) return;
+    setBusy(true); setMessage(""); setError("");
     try {
-      const result = await managementUpload<Attachment>(
-        `/api/manage/assignments/${assignment.id}/attachments`,
-        item.file,
-        item.id,
-        (progress) => setPending((current) => current.map((value) => value.id === item.id ? { ...value, progress } : value)),
-      );
-      setAttachments((current) => current.some((value) => value.id === result.id) ? current : [...current, result]);
-      setPending((current) => current.filter((value) => value.id !== item.id));
+      const id = await ensureAssignment();
+      await managementMutation(`/api/manage/assignments/${id}/attachments/${item.attachment.id}`, "DELETE");
+      setFiles((current) => current.filter((value) => value.localId !== item.localId));
+      setDirty(true);
+      publishAttempt.current = null;
+    } catch (cause) { setError((cause as Error).message); } finally { setBusy(false); }
+  }
+
+  function retry(localId: string) {
+    publishAttempt.current = null;
+    setFiles((current) => current.map((item) => item.localId === localId ? { ...item, state: "queued", progress: 0, error: undefined } : item));
+    setError(""); setMessage("");
+  }
+
+  function move(index: number, delta: number) {
+    const target = index + delta;
+    if (target < 0 || target >= files.length || busy) return;
+    setFiles((current) => { const copy = [...current]; [copy[index], copy[target]] = [copy[target], copy[index]]; return copy; });
+    publishAttempt.current = null;
+    setDirty(true); setMessage("");
+  }
+
+  async function finish(action: "save" | "publish") {
+    if (busy) return;
+    setMessage(""); setError("");
+    if (files.some((item) => item.state === "queued" || item.state === "uploading")) { setError("Wait for every upload to finish before continuing."); return; }
+    if (files.some((item) => item.state === "failed")) { setError("Retry or remove every failed file before continuing."); return; }
+    if (action === "publish" && !title.trim()) { setError("Add a title before publishing."); return; }
+    if (action === "publish" && !files.some((item) => item.attachment)) { setError("Add at least one attachment before publishing."); return; }
+    setBusy(true);
+    let saved = false;
+    try {
+      const id = await ensureAssignment();
+      if (action === "save" || !publishAttempt.current) {
+        const result = await managementMutation<{ draftRevisionId: string }>(`/api/manage/assignments/${id}`, "PATCH", { title, description, attachmentOrder: files.map((item) => item.attachment!.id) });
+        saved = true; setDirty(false); setTemporary(false);
+        publishAttempt.current = action === "publish" ? result.draftRevisionId : null;
+      } else { saved = true; }
+      if (action === "publish") await managementMutation(`/api/manage/assignments/${id}/publish`, "POST", { draftRevisionId: publishAttempt.current });
+      router.push(action === "publish" ? "/manage?published=1" : "/manage?saved=1");
+      router.refresh();
     } catch (cause) {
-      setPending((current) => current.map((value) => value.id === item.id ? { ...value, state: "failed", error: (cause as Error).message } : value));
+      setError(saved && action === "publish" ? `Your draft was saved, but it was not published. ${(cause as Error).message}` : (cause as Error).message);
+      setBusy(false);
     }
   }
 
-  async function uploadAll() {
-    if (busy) return;
-    startOperation();
-    try {
-      for (const item of pending.filter((value) => value.state !== "uploading")) await uploadOne(item);
-      router.refresh();
-    } finally { setBusy(false); }
-  }
-
-  async function save() {
-    if (busy) return;
-    startOperation();
-    try {
-      await managementMutation(`/api/manage/assignments/${assignment.id}`, "PATCH", { title, description });
-      setDirty(false); setMessage("Draft saved."); router.refresh();
-    } catch (cause) { setError((cause as Error).message); } finally { setBusy(false); }
-  }
-
-  async function act(action: "publish" | "unpublish") {
-    if (busy) return;
-    setMessage(""); setError("");
-    if (action === "publish" && dirty) { setError("Save the draft before publishing."); return; }
-    if (action === "publish" && pending.length) { setError("Upload or remove every queued or failed file before publishing."); return; }
-    setBusy(true);
-    try {
-      await managementMutation(`/api/manage/assignments/${assignment.id}/${action}`);
-      if (action === "publish") {
-        router.push("/manage?published=1");
-        router.refresh();
-        return;
-      }
-      setMessage("Assignment unpublished. Supervisors can no longer view it."); router.refresh();
-    } catch (cause) { setError((cause as Error).message); } finally { setBusy(false); }
-  }
-
-  async function remove(id: string) {
-    if (busy || !confirm("Remove this attachment from the working draft?")) return;
-    startOperation();
-    try {
-      await managementMutation(`/api/manage/assignments/${assignment.id}/attachments/${id}`, "DELETE");
-      setAttachments((current) => current.filter((value) => value.id !== id)); setMessage("Attachment removed from draft."); router.refresh();
-    } catch (cause) { setError((cause as Error).message); } finally { setBusy(false); }
-  }
-
-  async function move(index: number, delta: number) {
-    if (busy) return;
-    const copy = [...attachments]; const target = index + delta;
-    if (target < 0 || target >= copy.length) return;
-    [copy[index], copy[target]] = [copy[target], copy[index]];
-    startOperation(); setAttachments(copy);
-    try {
-      await managementMutation(`/api/manage/assignments/${assignment.id}`, "PATCH", { attachmentOrder: copy.map((value) => value.id) });
-      setMessage("Attachment order saved."); router.refresh();
-    } catch (cause) { setAttachments(attachments); setError((cause as Error).message); } finally { setBusy(false); }
+  async function unpublish() {
+    if (!assignmentId || busy || !confirm("Remove this assignment from supervisor view?")) return;
+    setBusy(true); setError(""); setMessage("");
+    try { await managementMutation(`/api/manage/assignments/${assignmentId}/unpublish`); setMessage("Assignment is no longer visible to supervisors."); router.refresh(); }
+    catch (cause) { setError((cause as Error).message); } finally { setBusy(false); }
   }
 
   async function destroy() {
-    if (busy || !confirm("Permanently delete this assignment and all of its revisions? This cannot be undone.")) return;
-    startOperation();
-    try { await managementMutation(`/api/manage/assignments/${assignment.id}`, "DELETE"); router.push("/manage"); router.refresh(); }
+    if (!assignmentId || busy || !confirm("Permanently delete this assignment? This cannot be undone.")) return;
+    setBusy(true);
+    try { await managementMutation(`/api/manage/assignments/${assignmentId}`, "DELETE"); router.push("/manage"); router.refresh(); }
     catch (cause) { setError((cause as Error).message); setBusy(false); }
   }
 
-  const publicationBlocked = busy || dirty || pending.length > 0 || attachments.length === 0;
-  return <main className="manage-page"><div className="editor-shell"><Link className="back" href="/manage">← All assignments</Link><header className="editor-header"><div><span className={`status ${assignment.published ? "published" : "draft"}`}>{assignment.published ? "Published — edits remain private until republished" : "Draft"}</span><h1>Edit assignment</h1></div><button className="danger-link" onClick={destroy} disabled={busy}>Delete assignment</button></header>{message && <p className="notice success" role="status">{message}</p>}{error && <p className="notice error" role="alert">{error}</p>}<section className="editor-panel"><label>Title<input value={title} maxLength={200} disabled={busy} onChange={(event) => { setTitle(event.target.value); setDirty(true); setMessage(""); setError(""); }}/></label><label>Description (optional, plain text)<textarea rows={6} maxLength={20000} value={description} disabled={busy} onChange={(event) => { setDescription(event.target.value); setDirty(true); setMessage(""); setError(""); }}/></label><button className="button" onClick={save} disabled={busy || !dirty}>{busy ? "Working…" : "Save draft"}</button></section><section className="editor-panel"><div className="section-title"><div><h2>Attachments</h2><p>JPEG, PNG, WebP or PDF. Order pages before publishing.</p></div><span>{attachments.length} stored</span></div><div className="file-buttons"><label className="button secondary">Choose files<input className="visually-hidden" type="file" multiple disabled={busy} accept="image/jpeg,image/png,image/webp,application/pdf" onChange={(event) => select(event.target.files)}/></label><label className="button secondary">Use camera<input className="visually-hidden" type="file" disabled={busy} accept="image/*" capture="environment" onChange={(event) => select(event.target.files)}/></label></div>{pending.length > 0 && <div className="pending-list">{pending.map((item) => <div key={item.id}><strong>{item.file.name}</strong><span>{item.state === "failed" ? item.error : `${item.progress}% ${item.state}`}</span><progress value={item.progress} max="100"/></div>)}<div className="pending-actions"><button className="button" disabled={busy} onClick={uploadAll}>{pending.some((item) => item.state === "failed") ? "Retry failed / upload queued" : "Upload selected files"}</button><button className="button secondary" disabled={busy} onClick={() => { setPending([]); setError(""); setMessage(""); }}>Remove queued files</button></div></div>}<div className="edit-attachments">{attachments.map((item, index) => <article key={item.id}>{item.mimeType.startsWith("image/") ? <img src={`/api/files/${item.id}?variant=thumbnail`} alt={`Preview of ${item.originalName}`}/> : <div className="pdf-mark">PDF</div>}<div><span>#{index + 1}</span><strong>{item.originalName}</strong><small>Uploaded {nairobiTime(item.uploadedAt, true)} (Africa/Nairobi)</small></div><div className="order-buttons"><button onClick={() => move(index, -1)} disabled={busy || index === 0} aria-label={`Move ${item.originalName} earlier`}>↑</button><button onClick={() => move(index, 1)} disabled={busy || index === attachments.length - 1} aria-label={`Move ${item.originalName} later`}>↓</button><button className="remove" disabled={busy} onClick={() => remove(item.id)}>Remove</button></div></article>)}</div></section><section className="publish-panel"><div><h2>Publication</h2><p>Publishing requires a saved title, no queued or failed uploads, and at least one stored attachment. A complete snapshot replaces the current supervisor version atomically.</p>{assignment.published && <p><strong>Current publication:</strong> {nairobiTime(assignment.published.publishedAt, true)} (Africa/Nairobi), {assignment.published.attachments.length} attachment{assignment.published.attachments.length === 1 ? "" : "s"}.</p>}</div><div>{assignment.published && <button className="button secondary" onClick={() => act("unpublish")} disabled={busy}>Unpublish</button>}<button className="button" onClick={() => act("publish")} disabled={publicationBlocked}>{assignment.published ? "Publish replacement" : "Publish assignment"}</button></div></section><dl className="timestamp-list"><div><dt>Assignment created</dt><dd>{nairobiTime(assignment.createdAt, true)} (Africa/Nairobi)</dd></div><div><dt>Draft last updated</dt><dd>{nairobiTime(assignment.draft.updatedAt, true)} (Africa/Nairobi)</dd></div></dl></div></main>;
+  const uploading = files.some((item) => item.state === "queued" || item.state === "uploading");
+  const failed = files.some((item) => item.state === "failed");
+  const completed = files.filter((item) => item.attachment).length;
+  const finalBlocked = busy || uploading || failed;
+
+  return <main className="manage-page"><div className="editor-shell"><Link className="back" href="/manage" onClick={leave}>← All assignments</Link><header className="editor-header"><div><span className={`status ${assignment?.published ? "published" : "draft"}`}>{assignment?.published ? "Published — changes stay private until you publish again" : "Draft"}</span><h1>{assignment ? "Edit assignment" : "New assignment"}</h1></div>{assignmentId && <button className="danger-link" onClick={destroy} disabled={busy}>Delete assignment</button>}</header>{message && <p className="notice success" role="status">{message}</p>}{error && <p className="notice error" role="alert">{error}</p>}<section className="editor-panel assignment-fields"><label>Title<input value={title} maxLength={200} disabled={busy} onChange={(event) => { setTitle(event.target.value); setDirty(true); publishAttempt.current = null; setMessage(""); setError(""); }} placeholder="e.g. Classroom management reflection"/></label><label>Description (optional)<textarea rows={6} maxLength={20000} value={description} disabled={busy} onChange={(event) => { setDescription(event.target.value); setDirty(true); publishAttempt.current = null; setMessage(""); setError(""); }}/></label><div className="section-title"><div><h2>Attachments</h2><p>JPEG, PNG, WebP or PDF. Uploading starts as soon as you choose files.</p></div><span>{completed} uploaded</span></div><div className="file-buttons"><label className="button secondary">Choose files<input className="visually-hidden" type="file" multiple disabled={busy} accept="image/jpeg,image/png,image/webp,application/pdf" onChange={(event) => select(event.currentTarget)}/></label><label className="button secondary">Use camera<input className="visually-hidden" type="file" disabled={busy} accept="image/*" capture="environment" onChange={(event) => select(event.currentTarget)}/></label></div><div className="edit-attachments">{files.map((item, index) => <article key={item.localId} className={item.state !== "complete" ? "upload-row" : undefined}>{item.attachment?.mimeType.startsWith("image/") ? <img src={`/api/files/${item.attachment.id}?variant=thumbnail`} alt={`Preview of ${item.attachment.originalName}`}/> : item.attachment ? <div className="pdf-mark">PDF</div> : <div className="upload-mark">{item.state === "failed" ? "!" : "…"}</div>}<div><span>#{index + 1}</span><strong>{item.attachment?.originalName ?? item.file?.name}</strong>{item.state === "complete" && item.attachment ? <small>Uploaded {nairobiTime(item.attachment.uploadedAt, true)} (Africa/Nairobi)</small> : <><small>{item.state === "failed" ? item.error : `${item.progress}% ${item.state === "queued" ? "waiting" : "uploading"}`}</small><progress value={item.progress} max="100"/></>}</div><div className="order-buttons"><button onClick={() => move(index, -1)} disabled={busy || index === 0} aria-label={`Move ${(item.attachment?.originalName ?? item.file?.name)} earlier`}>↑</button><button onClick={() => move(index, 1)} disabled={busy || index === files.length - 1} aria-label={`Move ${(item.attachment?.originalName ?? item.file?.name)} later`}>↓</button>{item.state === "failed" && <button disabled={busy} onClick={() => retry(item.localId)}>Retry</button>}<button className="remove" disabled={busy || item.state === "uploading"} onClick={() => remove(item)}>Remove</button></div></article>)}</div></section><section className="publish-panel final-actions"><div><h2>Ready?</h2><p>Save your work to continue later, or publish it for supervisor review.</p>{assignment?.published && <p><strong>Currently visible:</strong> {nairobiTime(assignment.published.publishedAt, true)} (Africa/Nairobi).</p>}</div><div>{assignment?.published && <button className="button secondary" onClick={unpublish} disabled={busy}>Unpublish</button>}<button className="button secondary" onClick={() => finish("save")} disabled={finalBlocked}>Save draft</button><button className="button" onClick={() => finish("publish")} disabled={finalBlocked || !title.trim() || completed === 0}>{assignment?.published ? "Publish changes" : "Publish"}</button></div></section>{assignment && <dl className="timestamp-list"><div><dt>Assignment created</dt><dd>{nairobiTime(assignment.createdAt, true)} (Africa/Nairobi)</dd></div><div><dt>Draft last updated</dt><dd>{nairobiTime(assignment.draft.updatedAt, true)} (Africa/Nairobi)</dd></div></dl>}</div></main>;
 }

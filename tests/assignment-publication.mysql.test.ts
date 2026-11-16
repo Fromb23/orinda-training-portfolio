@@ -53,6 +53,8 @@ mysql("assignment publication through Prisma/MySQL", () => {
     let persisted = await assignments.managementAssignment(assignmentId);
     const publishedOne = persisted.publishedRevision!;
     const draftTwo = persisted.draftRevision!;
+    await expect(assignments.publishAssignment(assignmentId, publishedOne.id)).resolves.toMatchObject({ duplicate: true });
+    expect((await assignments.managementAssignment(assignmentId)).draftRevision!.id).toBe(draftTwo.id);
     expect(publishedOne.attachments.map((item) => item.id)).toEqual([second.id, first.id]);
     expect(draftTwo.attachments.map((item) => item.id)).not.toEqual([second.id, first.id]);
     expect(new Set(draftTwo.attachments.map((item) => item.id)).size).toBe(2);
