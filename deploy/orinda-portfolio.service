@@ -1,0 +1,20 @@
+[Unit]
+Description=Mr Orinda training portfolio
+After=network.target mysql.service
+
+[Service]
+Type=simple
+User=orinda-portfolio
+Group=orinda-portfolio
+WorkingDirectory=/opt/orinda-portfolio/current
+EnvironmentFile=/etc/orinda-portfolio.env
+ExecStart=/usr/bin/npm start
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/orinda-portfolio/uploads
+
+[Install]
+WantedBy=multi-user.target

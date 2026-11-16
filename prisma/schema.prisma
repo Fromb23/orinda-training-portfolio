@@ -1,0 +1,96 @@
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  importFileExtension = "ts"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+enum AccessRole {
+  MANAGEMENT
+  SUPERVISOR
+}
+
+enum RevisionState {
+  WORKING
+  PUBLISHED
+  RETIRED
+}
+
+model Credential {
+  id        String     @id @default(cuid())
+  role      AccessRole @unique
+  tokenHash String     @db.Char(64)
+  version   Int        @default(1)
+  createdAt DateTime   @default(now()) @db.DateTime(3)
+  rotatedAt DateTime   @default(now()) @db.DateTime(3)
+  sessions Session[]
+}
+
+model Session {
+  id                String     @id @default(cuid())
+  sessionHash       String     @unique @db.Char(64)
+  csrfHash          String     @db.Char(64)
+  role              AccessRole
+  credentialId      String
+  credentialVersion Int
+  createdAt         DateTime   @default(now()) @db.DateTime(3)
+  expiresAt         DateTime   @db.DateTime(3)
+  credential        Credential @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+}
+
+model Assignment {
+  id                  String     @id @default(cuid())
+  createdAt           DateTime   @default(now()) @db.DateTime(3)
+  updatedAt           DateTime   @updatedAt @db.DateTime(3)
+  draftRevisionId     String?    @unique
+  publishedRevisionId String?    @unique
+  draftRevision       Revision?  @relation("DraftRevision", fields: [draftRevisionId], references: [id], onDelete: SetNull)
+  publishedRevision   Revision?  @relation("PublishedRevision", fields: [publishedRevisionId], references: [id], onDelete: SetNull)
+  revisions           Revision[] @relation("AssignmentRevisions")
+}
+
+model Revision {
+  id                  String        @id @default(cuid())
+  assignmentId        String
+  number              Int
+  state               RevisionState @default(WORKING)
+  title               String        @db.VarChar(200)
+  description         String?       @db.Text
+  createdAt           DateTime      @default(now()) @db.DateTime(3)
+  updatedAt           DateTime      @updatedAt @db.DateTime(3)
+  publishedAt         DateTime?     @db.DateTime(3)
+  assignment          Assignment    @relation("AssignmentRevisions", fields: [assignmentId], references: [id], onDelete: Cascade)
+  draftFor             Assignment?   @relation("DraftRevision")
+  publishedFor         Assignment?   @relation("PublishedRevision")
+  attachments         Attachment[]
+
+  @@unique([assignmentId, number])
+  @@index([state, publishedAt])
+}
+
+model Attachment {
+  id           String   @id @default(cuid())
+  revisionId   String
+  storageKey   String   @db.VarChar(180)
+  thumbnailKey String?  @db.VarChar(180)
+  originalName String   @db.VarChar(255)
+  mimeType     String   @db.VarChar(80)
+  sizeBytes    BigInt
+  sha256       String   @db.Char(64)
+  width        Int?
+  height       Int?
+  position     Int
+  uploadId     String?  @db.VarChar(100)
+  uploadedAt   DateTime @default(now()) @db.DateTime(3)
+  revision     Revision @relation(fields: [revisionId], references: [id], onDelete: Cascade)
+
+  @@unique([revisionId, position])
+  @@unique([revisionId, uploadId])
+  @@index([storageKey])
+  @@index([thumbnailKey])
+}

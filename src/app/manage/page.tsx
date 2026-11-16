@@ -1,0 +1,3 @@
+import { redirect } from "next/navigation"; import { getSession } from "@/lib/auth"; import { db } from "@/lib/db"; import { serialiseRevision } from "@/lib/serialise"; import ManageDashboard from "@/components/ManageDashboard";
+export const dynamic="force-dynamic";
+export default async function ManagePage(){if(!await getSession("MANAGEMENT"))redirect("/");const items=await db.assignment.findMany({include:{draftRevision:{include:{attachments:{orderBy:{position:"asc"}}}},publishedRevision:true},orderBy:{updatedAt:"desc"}});return <ManageDashboard initial={items.map(x=>({id:x.id,createdAt:x.createdAt.toISOString(),updatedAt:x.updatedAt.toISOString(),draft:serialiseRevision(x.draftRevision!),publishedAt:x.publishedRevision?.publishedAt?.toISOString()??null}))}/>}

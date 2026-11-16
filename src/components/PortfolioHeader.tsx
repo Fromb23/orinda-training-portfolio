@@ -1,0 +1,2 @@
+import Link from "next/link";
+export function PortfolioHeader() { return <header className="site-header"><div className="container header-inner"><Link className="brand" href="/portfolio"><span className="brand-mark">MO</span><span><strong>Mr. Orinda</strong><small>Training portfolio</small></span></Link><nav aria-label="Portfolio"><a href="#about">About</a><a href="#assignments">Assignments</a><a href="#experience">Experience</a></nav></div></header>; }

@@ -1,0 +1,2 @@
+import { removeDraftAttachment } from "@/lib/assignments"; import { requireCsrf } from "@/lib/auth"; import { jsonError, privateJson } from "@/lib/http";
+export async function DELETE(request: Request, { params }: { params: Promise<{ id: string; attachmentId: string }> }) { try { await requireCsrf(request); const p = await params; await removeDraftAttachment(p.id, p.attachmentId); return privateJson({ ok: true }); } catch (e) { return jsonError(e); } }

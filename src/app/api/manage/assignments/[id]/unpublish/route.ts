@@ -1,0 +1,2 @@
+import { unpublishAssignment } from "@/lib/assignments"; import { requireCsrf } from "@/lib/auth"; import { jsonError, privateJson } from "@/lib/http";
+export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) { try { await requireCsrf(request); await unpublishAssignment((await params).id); return privateJson({ ok: true }); } catch (e) { return jsonError(e); } }
