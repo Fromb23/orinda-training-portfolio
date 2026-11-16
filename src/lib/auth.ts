@@ -6,9 +6,8 @@ import { config } from "./config";
 import { HttpError } from "./http";
 import { sessionIsCurrent } from "./security-core";
 import { canonicalSiteOrigin } from "./site-url";
-
-export const SESSION_COOKIE = "orinda_session";
-export const CSRF_COOKIE = "orinda_csrf";
+import { CSRF_COOKIES, LEGACY_CSRF_COOKIE, LEGACY_SESSION_COOKIE, SESSION_COOKIES } from "./session-cookies";
+export { CSRF_COOKIES, LEGACY_CSRF_COOKIE, LEGACY_SESSION_COOKIE, SESSION_COOKIES, sessionCookieOptions } from "./session-cookies";
 
 function key() {
   const value = process.env.TOKEN_HASH_KEY;
@@ -45,8 +44,24 @@ export async function exchangeToken(role: AccessRole, token: string) {
 export type ValidSession = Session;
 
 export async function getSession(requiredRole?: AccessRole): Promise<ValidSession | null> {
-  const token = (await cookies()).get(SESSION_COOKIE)?.value;
-  if (!token) return null;
+  const cookieStore = await cookies();
+  const roles: AccessRole[] = requiredRole ? [requiredRole] : ["MANAGEMENT", "SUPERVISOR"];
+  for (const role of roles) {
+    const token = cookieStore.get(SESSION_COOKIES[role])?.value;
+    const session = token ? await validSessionForToken(token, role) : null;
+    if (session) return session;
+  }
+
+  // Legacy cookies remain a safe migration fallback: the database role must still
+  // match the role requested by the caller, so a supervisor session can never be
+  // interpreted as management access.
+  const legacyToken = cookieStore.get(LEGACY_SESSION_COOKIE)?.value;
+  if (!legacyToken) return null;
+  if (requiredRole) return validSessionForToken(legacyToken, requiredRole);
+  return validSessionForToken(legacyToken);
+}
+
+async function validSessionForToken(token: string, requiredRole?: AccessRole) {
   const session = await db.session.findUnique({ where: { sessionHash: secretHash(token) }, include: { credential: true } });
   if (!session || !sessionIsCurrent(session, session.credential)) return null;
   if (requiredRole && session.role !== requiredRole) return null;
@@ -61,14 +76,13 @@ export async function requireSession(role?: AccessRole) {
 
 export async function requireCsrf(request: Request, role: AccessRole = "MANAGEMENT") {
   const session = await requireSession(role);
-  const cookieToken = (await cookies()).get(CSRF_COOKIE)?.value ?? "";
+  const cookieStore = await cookies();
+  const cookieToken = cookieStore.get(CSRF_COOKIES[role])?.value
+    ?? cookieStore.get(LEGACY_CSRF_COOKIE)?.value
+    ?? "";
   const headerToken = request.headers.get("x-csrf-token") ?? "";
   if (!cookieToken || cookieToken !== headerToken || !safeHashEqual(session.csrfHash, secretHash(headerToken))) throw new HttpError(403, "Invalid CSRF token. Refresh the page and try again.");
   const origin = request.headers.get("origin");
   if (origin && origin !== canonicalSiteOrigin()) throw new HttpError(403, "Cross-origin mutation denied.");
   return session;
-}
-
-export function sessionCookieOptions(expires: Date, httpOnly: boolean) {
-  return { httpOnly, secure: process.env.NODE_ENV === "production", sameSite: "strict" as const, path: "/", expires };
 }

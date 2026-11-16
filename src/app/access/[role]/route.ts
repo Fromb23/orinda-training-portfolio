@@ -1,6 +1,7 @@
 import { AccessRole } from "@/generated/prisma/client";
 import { NextResponse } from "next/server";
-import { CSRF_COOKIE, exchangeToken, SESSION_COOKIE, sessionCookieOptions } from "@/lib/auth";
+import { CSRF_COOKIES, exchangeToken, SESSION_COOKIES, sessionCookieOptions } from "@/lib/auth";
+import { HttpError } from "@/lib/http";
 import { canonicalSiteUrl } from "@/lib/site-url";
 
 export const dynamic = "force-dynamic";
@@ -14,11 +15,12 @@ export async function GET(request: Request, { params }: { params: Promise<{ role
   try {
     const session = await exchangeToken(role, token);
     const response = privateRedirect(cleanUrl, 303);
-    response.cookies.set(SESSION_COOKIE, session.sessionToken, sessionCookieOptions(session.expiresAt, true));
-    response.cookies.set(CSRF_COOKIE, session.csrfToken, sessionCookieOptions(session.expiresAt, false));
+    response.cookies.set(SESSION_COOKIES[role], session.sessionToken, sessionCookieOptions(session.expiresAt, true));
+    response.cookies.set(CSRF_COOKIES[role], session.csrfToken, sessionCookieOptions(session.expiresAt, false));
     return response;
-  } catch {
-    return privateRedirect(canonicalSiteUrl("/?access=invalid"), 303);
+  } catch (error) {
+    if (!(error instanceof HttpError) || error.status !== 401) throw error;
+    return privateRedirect(canonicalSiteUrl(`/?access=invalid&role=${value}`), 303);
   }
 }
 

@@ -3,19 +3,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { exchangeToken } = vi.hoisted(() => ({ exchangeToken: vi.fn() }));
 
 vi.mock("@/lib/auth", () => ({
-  CSRF_COOKIE: "orinda_csrf",
-  SESSION_COOKIE: "orinda_session",
+  CSRF_COOKIES: { MANAGEMENT: "orinda_management_csrf", SUPERVISOR: "orinda_supervisor_csrf" },
+  SESSION_COOKIES: { MANAGEMENT: "orinda_management_session", SUPERVISOR: "orinda_supervisor_session" },
   exchangeToken,
   sessionCookieOptions: (expires: Date, httpOnly: boolean) => ({
     expires,
     httpOnly,
     path: "/",
-    sameSite: "strict" as const,
+    sameSite: "lax" as const,
     secure: true,
   }),
 }));
 
 import { GET } from "../src/app/access/[role]/route";
+import { HttpError } from "../src/lib/http";
 import { canonicalSiteOrigin } from "../src/lib/site-url";
 
 const canonicalOrigin = "https://orinda-training.scholaroscope.com";
@@ -55,18 +56,19 @@ describe("access redirects behind a reverse proxy", () => {
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(exchangeToken).toHaveBeenCalledWith(expectedRole, "a".repeat(43));
     expect(response.headers.getSetCookie()).toEqual(expect.arrayContaining([
-      expect.stringContaining("orinda_session=session-token"),
-      expect.stringContaining("orinda_csrf=csrf-token"),
+      expect.stringContaining(`orinda_${role}_session=session-token`),
+      expect.stringContaining(`orinda_${role}_csrf=csrf-token`),
     ]));
+    expect(response.headers.getSetCookie().every((cookie) => cookie.toLowerCase().includes("samesite=lax") && cookie.toLowerCase().includes("secure"))).toBe(true);
   });
 
   it("keeps invalid-token redirects on the canonical origin", async () => {
-    exchangeToken.mockRejectedValue(new Error("invalid token"));
+    exchangeToken.mockRejectedValue(new HttpError(401, "invalid token"));
 
     const response = await redirect("management", "http://127.0.0.1:3011");
 
     expect(response.status).toBe(303);
-    expect(response.headers.get("location")).toBe(`${canonicalOrigin}/?access=invalid`);
+    expect(response.headers.get("location")).toBe(`${canonicalOrigin}/?access=invalid&role=management`);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
   });
 

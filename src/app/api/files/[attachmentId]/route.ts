@@ -11,6 +11,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ atta
     const url = new URL(request.url); const thumb = url.searchParams.get("variant") === "thumbnail";
     if (thumb && (!attachment.thumbnailKey || !attachment.mimeType.startsWith("image/"))) throw new HttpError(404, "Thumbnail not found.");
     const file = await openStored(thumb ? attachment.thumbnailKey! : attachment.storageKey);
-    return new Response(Readable.toWeb(file.stream) as ReadableStream, { headers: { "Content-Type": thumb ? "image/webp" : attachment.mimeType, "Content-Length": String(file.size), "Content-Disposition": disposition(attachment.originalName, url.searchParams.get("download") === "1"), "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" } });
+    const inlinePdf = !thumb && attachment.mimeType === "application/pdf" && url.searchParams.get("download") !== "1";
+    return new Response(Readable.toWeb(file.stream) as ReadableStream, { headers: { "Content-Type": thumb ? "image/webp" : attachment.mimeType, "Content-Length": String(file.size), "Content-Disposition": disposition(attachment.originalName, url.searchParams.get("download") === "1"), "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff", ...(inlinePdf ? { "X-Frame-Options": "SAMEORIGIN", "Content-Security-Policy": "frame-ancestors 'self'" } : {}) } });
   } catch (e) { return jsonError(e); }
 }

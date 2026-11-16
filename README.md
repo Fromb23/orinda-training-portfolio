@@ -1,6 +1,6 @@
 # Mr Orinda | Training portfolio
 
-A private, mobile-first training portfolio built with Next.js App Router, MySQL/Prisma, and persistent VPS file storage. It preserves Mr. Orinda’s biography, teaching experience, education, leadership, portrait, typography, and colour theme while replacing the old document library with publishable training assignments.
+A private, mobile-first training portfolio built with Next.js App Router, MySQL/Prisma, and persistent VPS file storage. It presents Mr. Orinda's biography, portrait, and publishable training assignments in the established typography and colour theme.
 
 Academic PDFs, certificates, CV files, and professional-document downloads are intentionally not part of this repository.
 
@@ -11,7 +11,7 @@ There are two independent, stable bearer links:
 - **Supervisor:** exchanges its token for an HttpOnly supervisor session, then redirects to `/portfolio`. It can see only current published snapshots and their files.
 - **Management:** exchanges its token for an HttpOnly management session, then redirects to `/manage`. It can create, edit, upload, order, publish, unpublish, and delete assignments.
 
-The raw token appears only in the initial entry URL. The server stores an HMAC-SHA-256 hash, not the token. Sessions record the credential version, so rotating either credential invalidates only sessions issued from that credential. Mutations require a matching SameSite CSRF cookie/header pair and an authenticated management session. GET routes do not perform management mutations.
+The raw token appears only in the initial entry URL. The server stores an HMAC-SHA-256 hash, not the token. Sessions record the credential version, so rotating either credential invalidates only sessions issued from that credential. Management and supervisor use separate role-specific session cookies, so both can coexist in one browser. Cookies use `SameSite=Lax` so a full bearer link opened as a top-level navigation from email or messaging can complete its session exchange; management mutations still require a matching role-specific CSRF cookie/header pair and the canonical origin. GET routes do not perform management mutations.
 
 After a published assignment is edited, supervisors continue to see the previous immutable published revision. Publishing promotes the fully stored working revision in one database transaction and creates a new private working revision. This avoids partial/failed uploads becoming visible.
 
@@ -34,7 +34,7 @@ Requirements: Node.js 22 or newer, npm, and MySQL 8.0 or newer.
 
 6. Start with `npm run dev`.
 
-Useful checks are `npm run lint`, `npm test`, and `npm run build`.
+Useful checks are `npm run lint`, `npm test`, `npm run test:browser`, and `npm run build`. Browser tests use installed Edge on Windows or Playwright Chromium elsewhere; set `PLAYWRIGHT_WEBKIT=1` to include WebKit when that browser bundle is installed.
 
 ### MySQL setup example
 
