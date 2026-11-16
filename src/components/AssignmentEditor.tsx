@@ -5,28 +5,12 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { nairobiTime } from "@/lib/time";
+import { managementMutation, managementUpload } from "@/lib/management-request";
 
 type Attachment = { id: string; originalName: string; mimeType: string; sizeBytes: number; position: number; uploadedAt: string };
 type Revision = { id: string; title: string; description: string | null; createdAt: string; updatedAt: string; publishedAt: string | null; attachments: Attachment[] };
 type Assignment = { id: string; createdAt: string; updatedAt: string; draft: Revision; published: Revision | null };
 type Pending = { id: string; file: File; progress: number; state: "queued" | "uploading" | "failed"; error?: string };
-
-const CSRF_COOKIE = "orinda_management_csrf";
-
-function csrf() {
-  return decodeURIComponent(document.cookie.split("; ").find((value) => value.startsWith(`${CSRF_COOKIE}=`))?.split("=")[1] ?? "");
-}
-
-async function mutation(url: string, method = "POST", body?: unknown) {
-  const response = await fetch(url, {
-    method,
-    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf() },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error);
-  return result;
-}
 
 export default function AssignmentEditor({ assignment }: { assignment: Assignment }) {
   const router = useRouter();
@@ -70,29 +54,20 @@ export default function AssignmentEditor({ assignment }: { assignment: Assignmen
     setMessage(""); setError("");
   }
 
-  function uploadOne(item: Pending) {
-    return new Promise<void>((resolve) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open("POST", `/api/manage/assignments/${assignment.id}/attachments`);
-      xhr.setRequestHeader("X-CSRF-Token", csrf());
-      xhr.setRequestHeader("X-File-Name", encodeURIComponent(item.file.name));
-      xhr.setRequestHeader("X-Upload-Id", item.id);
-      xhr.upload.onprogress = (event) => { if (event.lengthComputable) setPending((current) => current.map((value) => value.id === item.id ? { ...value, progress: Math.round(event.loaded / event.total * 100) } : value)); };
-      xhr.onload = () => {
-        let result;
-        try { result = JSON.parse(xhr.responseText); } catch { result = { error: "Invalid server response." }; }
-        if (xhr.status >= 200 && xhr.status < 300) {
-          setAttachments((current) => current.some((value) => value.id === result.id) ? current : [...current, result]);
-          setPending((current) => current.filter((value) => value.id !== item.id));
-        } else {
-          setPending((current) => current.map((value) => value.id === item.id ? { ...value, state: "failed", error: result.error } : value));
-        }
-        resolve();
-      };
-      xhr.onerror = () => { setPending((current) => current.map((value) => value.id === item.id ? { ...value, state: "failed", error: "Network error. Retry this file." } : value)); resolve(); };
-      setPending((current) => current.map((value) => value.id === item.id ? { ...value, state: "uploading" } : value));
-      xhr.send(item.file);
-    });
+  async function uploadOne(item: Pending) {
+    setPending((current) => current.map((value) => value.id === item.id ? { ...value, state: "uploading" } : value));
+    try {
+      const result = await managementUpload<Attachment>(
+        `/api/manage/assignments/${assignment.id}/attachments`,
+        item.file,
+        item.id,
+        (progress) => setPending((current) => current.map((value) => value.id === item.id ? { ...value, progress } : value)),
+      );
+      setAttachments((current) => current.some((value) => value.id === result.id) ? current : [...current, result]);
+      setPending((current) => current.filter((value) => value.id !== item.id));
+    } catch (cause) {
+      setPending((current) => current.map((value) => value.id === item.id ? { ...value, state: "failed", error: (cause as Error).message } : value));
+    }
   }
 
   async function uploadAll() {
@@ -108,7 +83,7 @@ export default function AssignmentEditor({ assignment }: { assignment: Assignmen
     if (busy) return;
     startOperation();
     try {
-      await mutation(`/api/manage/assignments/${assignment.id}`, "PATCH", { title, description });
+      await managementMutation(`/api/manage/assignments/${assignment.id}`, "PATCH", { title, description });
       setDirty(false); setMessage("Draft saved."); router.refresh();
     } catch (cause) { setError((cause as Error).message); } finally { setBusy(false); }
   }
@@ -120,7 +95,7 @@ export default function AssignmentEditor({ assignment }: { assignment: Assignmen
     if (action === "publish" && pending.length) { setError("Upload or remove every queued or failed file before publishing."); return; }
     setBusy(true);
     try {
-      await mutation(`/api/manage/assignments/${assignment.id}/${action}`);
+      await managementMutation(`/api/manage/assignments/${assignment.id}/${action}`);
       if (action === "publish") {
         router.push("/manage?published=1");
         router.refresh();
@@ -134,7 +109,7 @@ export default function AssignmentEditor({ assignment }: { assignment: Assignmen
     if (busy || !confirm("Remove this attachment from the working draft?")) return;
     startOperation();
     try {
-      await mutation(`/api/manage/assignments/${assignment.id}/attachments/${id}`, "DELETE");
+      await managementMutation(`/api/manage/assignments/${assignment.id}/attachments/${id}`, "DELETE");
       setAttachments((current) => current.filter((value) => value.id !== id)); setMessage("Attachment removed from draft."); router.refresh();
     } catch (cause) { setError((cause as Error).message); } finally { setBusy(false); }
   }
@@ -146,7 +121,7 @@ export default function AssignmentEditor({ assignment }: { assignment: Assignmen
     [copy[index], copy[target]] = [copy[target], copy[index]];
     startOperation(); setAttachments(copy);
     try {
-      await mutation(`/api/manage/assignments/${assignment.id}`, "PATCH", { attachmentOrder: copy.map((value) => value.id) });
+      await managementMutation(`/api/manage/assignments/${assignment.id}`, "PATCH", { attachmentOrder: copy.map((value) => value.id) });
       setMessage("Attachment order saved."); router.refresh();
     } catch (cause) { setAttachments(attachments); setError((cause as Error).message); } finally { setBusy(false); }
   }
@@ -154,7 +129,7 @@ export default function AssignmentEditor({ assignment }: { assignment: Assignmen
   async function destroy() {
     if (busy || !confirm("Permanently delete this assignment and all of its revisions? This cannot be undone.")) return;
     startOperation();
-    try { await mutation(`/api/manage/assignments/${assignment.id}`, "DELETE"); router.push("/manage"); router.refresh(); }
+    try { await managementMutation(`/api/manage/assignments/${assignment.id}`, "DELETE"); router.push("/manage"); router.refresh(); }
     catch (cause) { setError((cause as Error).message); setBusy(false); }
   }
 

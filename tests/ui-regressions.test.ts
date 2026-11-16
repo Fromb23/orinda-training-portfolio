@@ -27,4 +27,19 @@ describe("publish and portfolio UI regressions", () => {
     const css = await read("src/app/globals.css");
     expect(css).toContain("@media(max-width:900px)"); expect(css).toContain(".review-workspace{grid-template-columns:1fr");
   });
+
+  it("isolates hero role typography and keeps assignment metadata compact", async () => {
+    const page = await read("src/app/portfolio/page.tsx");
+    const detail = await read("src/app/portfolio/assignments/[id]/page.tsx");
+    const viewer = await read("src/components/AttachmentView.tsx");
+    const css = await read("src/app/globals.css");
+    expect(page).toContain('className="hero-role"');
+    expect(css).toMatch(/\.hero h1 \.hero-role\{[^}]*line-height:1\.35[^}]*letter-spacing:normal/);
+    expect(detail).toContain('className="publication-date"');
+    expect(detail).not.toContain('className="assignment-facts"');
+    expect(detail).not.toContain("Latest file upload");
+    expect(detail).not.toContain("Total size");
+    expect(viewer).toContain('className="file-metadata"');
+    expect(viewer).toContain("Uploaded <time");
+  });
 });

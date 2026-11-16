@@ -27,15 +27,20 @@ export function safeHashEqual(expected: string, actual: string) {
 
 export function randomToken(bytes = 32) { return randomBytes(bytes).toString("base64url"); }
 
+export function csrfTokenForSession(sessionId: string) {
+  return createHmac("sha256", key()).update(`orinda-csrf-v1\0${sessionId}`).digest("base64url");
+}
+
 export async function exchangeToken(role: AccessRole, token: string) {
   if (token.length < 40) throw new HttpError(401, "Invalid access link.");
   const credential = await db.credential.findUnique({ where: { role } });
   if (!credential || !safeHashEqual(credential.tokenHash, secretHash(token))) throw new HttpError(401, "Invalid access link.");
   const sessionToken = randomToken();
-  const csrfToken = randomToken();
+  const sessionId = randomToken(18);
+  const csrfToken = csrfTokenForSession(sessionId);
   const expiresAt = new Date(Date.now() + config.sessionHours * 3_600_000);
   await db.session.create({ data: {
-    sessionHash: secretHash(sessionToken), csrfHash: secretHash(csrfToken), role,
+    id: sessionId, sessionHash: secretHash(sessionToken), csrfHash: secretHash(csrfToken), role,
     credentialId: credential.id, credentialVersion: credential.version, expiresAt,
   }});
   return { sessionToken, csrfToken, expiresAt };
@@ -81,8 +86,18 @@ export async function requireCsrf(request: Request, role: AccessRole = "MANAGEME
     ?? cookieStore.get(LEGACY_CSRF_COOKIE)?.value
     ?? "";
   const headerToken = request.headers.get("x-csrf-token") ?? "";
-  if (!cookieToken || cookieToken !== headerToken || !safeHashEqual(session.csrfHash, secretHash(headerToken))) throw new HttpError(403, "Invalid CSRF token. Refresh the page and try again.");
+  if (!cookieToken || cookieToken !== headerToken || !safeHashEqual(session.csrfHash, secretHash(headerToken))) {
+    throw new HttpError(403, "Invalid CSRF token.", "CSRF_INVALID");
+  }
   const origin = request.headers.get("origin");
   if (origin && origin !== canonicalSiteOrigin()) throw new HttpError(403, "Cross-origin mutation denied.");
   return session;
+}
+
+export function requireSameOrigin(request: Request) {
+  const origin = request.headers.get("origin");
+  const fetchSite = request.headers.get("sec-fetch-site");
+  if (origin !== canonicalSiteOrigin() || (fetchSite && fetchSite !== "same-origin")) {
+    throw new HttpError(403, "Cross-origin request denied.");
+  }
 }

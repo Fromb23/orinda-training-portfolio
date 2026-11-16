@@ -4,12 +4,9 @@ import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { nairobiTime } from "@/lib/time";
+import { managementMutation, managementQuery } from "@/lib/management-request";
 
 type Item = { id: string; createdAt: string; updatedAt: string; draft: { title: string; attachments: unknown[] }; publishedAt: string | null };
-
-function csrf() {
-  return decodeURIComponent(document.cookie.split("; ").find((value) => value.startsWith("orinda_management_csrf="))?.split("=")[1] ?? "");
-}
 
 export default function ManageDashboard({ initial, published }: { initial: Item[]; published: boolean }) {
   const router = useRouter();
@@ -21,9 +18,7 @@ export default function ManageDashboard({ initial, published }: { initial: Item[
   async function create() {
     setBusy(true); setError(""); setLink("");
     try {
-      const response = await fetch("/api/manage/assignments", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf() }, body: JSON.stringify({ title }) });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error);
+      const result = await managementMutation<{ id: string }>("/api/manage/assignments", "POST", { title });
       router.push(`/manage/assignments/${result.id}`);
     } catch (cause) { setError((cause as Error).message); } finally { setBusy(false); }
   }
@@ -31,8 +26,7 @@ export default function ManageDashboard({ initial, published }: { initial: Item[
   async function copyLink() {
     setError(""); setLink("");
     try {
-      const response = await fetch("/api/manage/share-link"); const result = await response.json();
-      if (!response.ok) throw new Error(result.error);
+      const result = await managementQuery<{ link: string | null }>("/api/manage/share-link");
       if (!result.link) throw new Error("The supervisor share link is not configured on the server.");
       await navigator.clipboard.writeText(result.link); setLink("Full supervisor access link copied.");
     } catch (cause) { setError((cause as Error).message); }
